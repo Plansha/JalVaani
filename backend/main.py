@@ -14,6 +14,7 @@ from typing import List
 from pydantic import BaseModel
 from .critical_details import evaluate_critical_details
 from .result_store import save_evaluation
+from fastapi.middleware.cors import CORSMiddleware
 
 load_dotenv(Path(__file__).with_name(".env"))
 GNANI_API_KEY = os.getenv("GNANI_API_KEY")
@@ -22,6 +23,16 @@ app = FastAPI(
     title="JalVaani API",
     description="Noise-resilient voice intelligence for coastal communities",
     version="0.5.0",
+)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "http://127.0.0.1:5500",
+        "http://localhost:5500",
+    ],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 SUPPORTED_LANGUAGES = GnaniSTTClient.supported_languages()
