@@ -1,0 +1,21 @@
+
+.env
+backend/.env
+.venv/
+__pycache__/
+
+# Secrets
+.env
+**/.env
+
+# Python
+.venv/
+**/.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Generated evaluation output
+backend/evaluation_results.json
+backend/benchmark_report.json
+backend/benchmark_report_backup.json
