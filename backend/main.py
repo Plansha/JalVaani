@@ -2,33 +2,84 @@
 import os
 import time
 from pathlib import Path
+from secrets import compare_digest
+from typing import List
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException
+from fastapi import (
+    FastAPI,
+    UploadFile,
+    File,
+    Form,
+    HTTPException,
+    Depends,
+)
 from fastapi.concurrency import run_in_threadpool
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from gnani.stt import GnaniSTTClient
+from pydantic import BaseModel
+
 from .context_echo import review_transcript
-from pydantic import BaseModel
 from .shorproof import evaluate_transcript
-from typing import List
-from pydantic import BaseModel
 from .critical_details import evaluate_critical_details
 from .result_store import save_evaluation
-from fastapi.middleware.cors import CORSMiddleware
+from .yaadvault import (
+    save_history,
+    list_histories,
+    get_history,
+    delete_history,
+)
 
 load_dotenv(Path(__file__).with_name(".env"))
+
 GNANI_API_KEY = os.getenv("GNANI_API_KEY")
+YAADVAULT_API_TOKEN = os.getenv("YAADVAULT_API_TOKEN")
+
+yaadvault_bearer = HTTPBearer(auto_error=False)
+
+
+def require_yaadvault_token(
+    credentials: HTTPAuthorizationCredentials | None = Depends(
+        yaadvault_bearer
+    ),
+):
+    if not YAADVAULT_API_TOKEN:
+        raise HTTPException(
+            status_code=503,
+            detail="YaadVault authentication is not configured",
+        )
+
+    if (
+        credentials is None
+        or credentials.scheme.lower() != "bearer"
+        or not compare_digest(
+            credentials.credentials,
+            YAADVAULT_API_TOKEN,
+        )
+    ):
+        raise HTTPException(
+            status_code=401,
+            detail="Valid bearer token required",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    return True
+
 
 app = FastAPI(
     title="JalVaani API",
     description="Noise-resilient voice intelligence for coastal communities",
     version="0.5.0",
 )
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
         "http://127.0.0.1:5500",
         "http://localhost:5500",
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
     ],
     allow_credentials=True,
     allow_methods=["*"],
@@ -188,7 +239,6 @@ class ShorProofRequest(BaseModel):
     latency_ms: float | None = None
 
 
-
 @app.post("/api/shorproof/evaluate")
 def evaluate_shorproof(request: ShorProofRequest):
     try:
@@ -205,12 +255,10 @@ def evaluate_shorproof(request: ShorProofRequest):
         raise HTTPException(status_code=500, detail=str(e)) from e
 
 
-
 class CriticalDetailsRequest(BaseModel):
     reference_transcript: str
     predicted_transcript: str
     critical_details: List[str]
-
 
 
 @app.post("/api/shorproof/critical-details")
@@ -229,3 +277,70 @@ def evaluate_critical_details_endpoint(
         raise HTTPException(status_code=422, detail=str(e)) from e
     except RuntimeError as e:
         raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+class YaadVaultCreate(BaseModel):
+    title: str
+    transcript: str
+    consent_given: bool
+
+
+@app.post(
+    "/api/yaadvault",
+    status_code=201,
+    dependencies=[Depends(require_yaadvault_token)],
+)
+def create_yaadvault_history(payload: YaadVaultCreate):
+    try:
+        return save_history(
+            title=payload.title,
+            transcript=payload.transcript,
+            consent_given=payload.consent_given,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.get(
+    "/api/yaadvault",
+    dependencies=[Depends(require_yaadvault_token)],
+)
+def get_yaadvault_histories():
+    try:
+        return {"histories": list_histories()}
+    except RuntimeError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.get(
+    "/api/yaadvault/{history_id}",
+    dependencies=[Depends(require_yaadvault_token)],
+)
+def get_yaadvault_history(history_id: str):
+    try:
+        record = get_history(history_id)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+    if record is None:
+        raise HTTPException(status_code=404, detail="History not found")
+
+    return record
+
+
+@app.delete(
+    "/api/yaadvault/{history_id}",
+    dependencies=[Depends(require_yaadvault_token)],
+)
+def remove_yaadvault_history(history_id: str):
+    try:
+        deleted = delete_history(history_id)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+    if not deleted:
+        raise HTTPException(status_code=404, detail="History not found")
+
+    return {"deleted": True, "history_id": history_id}
