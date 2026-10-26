@@ -36,6 +36,37 @@ load_dotenv(Path(__file__).with_name(".env"))
 GNANI_API_KEY = os.getenv("GNANI_API_KEY")
 YAADVAULT_API_TOKEN = os.getenv("YAADVAULT_API_TOKEN")
 
+# Audio MIME types accepted by the upload endpoint.
+ALLOWED_TYPES = {
+    "audio/mpeg",
+    "audio/mp3",
+    "audio/wav",
+    "audio/x-wav",
+    "audio/wave",
+    "audio/mp4",
+    "audio/x-m4a",
+    "audio/aac",
+    "audio/ogg",
+    "application/ogg",
+    "audio/webm",
+    "audio/flac",
+    "audio/x-flac",
+}
+
+SUPPORTED_LANGUAGES = {
+    "en-IN": "English (India)",
+    "hi-IN": "Hindi",
+    "bn-IN": "Bengali",
+    "gu-IN": "Gujarati",
+    "kn-IN": "Kannada",
+    "ml-IN": "Malayalam",
+    "mr-IN": "Marathi",
+    "od-IN": "Odia",
+    "pa-IN": "Punjabi",
+    "ta-IN": "Tamil",
+    "te-IN": "Telugu",
+}
+
 yaadvault_bearer = HTTPBearer(auto_error=False)
 
 
@@ -73,7 +104,6 @@ app = FastAPI(
     version="0.5.0",
 )
 
-
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
@@ -82,7 +112,7 @@ app.add_middleware(
         "http://localhost:5173",
         "http://127.0.0.1:5173",
         "https://jalvaani-frontend.onrender.com",
-        # Add the exact Vercel URL here when available
+        # Add the exact Vercel frontend origin here when available.
     ],
     allow_credentials=True,
     allow_methods=["*"],
@@ -124,7 +154,7 @@ async def transcribe_audio(
         if audio.content_type not in ALLOWED_TYPES:
             raise HTTPException(
                 status_code=415,
-                detail="Unsupported audio format",
+                detail=f"Unsupported audio format: {audio.content_type}",
             )
 
         if language_code not in SUPPORTED_LANGUAGES:
@@ -184,7 +214,6 @@ async def transcribe_audio(
                 detail="The speech service returned no usable transcript.",
             )
 
-        # ContextEcho: flag possible repeated words for human review.
         review = review_transcript(transcript)
 
         return {
@@ -214,7 +243,7 @@ async def transcribe_audio(
         )
         raise HTTPException(
             status_code=502,
-            detail="Transcription failed. Check the server terminal for the error.",
+            detail="Transcription failed. Check the server logs for the error.",
         ) from e
 
     finally:
