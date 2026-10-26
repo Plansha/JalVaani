@@ -1,634 +1,1438 @@
 import { useEffect, useRef, useState } from 'react'
-import {
-  saveRecording,
-  getRecordings,
-  deleteRecording,
-  type StoredRecording,
-} from './audioStorage'
-import './App.css'
+
+const API_BASE_URL =
+  import.meta.env.VITE_API_BASE_URL || 'https://jalvaani.onrender.com'
+
+type Language = {
+  code: string
+  name: string
+}
 
 type Recording = {
   id: string
   name: string
   date: string
+  blob: Blob
   url: string
 }
 
 type Story = {
   id: string
   title: string
-  speaker: string
-  story: string
+  language: string
+  text: string
   date: string
 }
 
-const TRANSCRIPT_KEY = 'jalvaani-transcript'
-const STORIES_KEY = 'jalvaani-stories'
+const DB_NAME = 'jalvaani-local-db'
+const STORE_NAME = 'recordings'
 
+const fallbackLanguages: Language[] = [
+  { code: 'hi-IN', name: 'Hindi' },
+  { code: 'en-IN', name: 'English (India)' },
+  { code: 'bn-IN', name: 'Bengali' },
+  { code: 'gu-IN', name: 'Gujarati' },
+  { code: 'kn-IN', name: 'Kannada' },
+  { code: 'ml-IN', name: 'Malayalam' },
+  { code: 'mr-IN', name: 'Marathi' },
+  { code: 'pa-IN', name: 'Punjabi' },
+  { code: 'ta-IN', name: 'Tamil' },
+  { code: 'te-IN', name: 'Telugu' },
+]
+
+function openDatabase(): Promise<IDBDatabase> {
+  return new Promise((resolve, reject) => {
+    const request = indexedDB.open(DB_NAME, 1)
+
+    request.onupgradeneeded = () => {
+      if (!request.result.objectStoreNames.contains(STORE_NAME)) {
+        request.result.createObjectStore(STORE_NAME, {
+          keyPath: 'id',
+        })
+      }
+    }
+
+    request.onsuccess = () => resolve(request.result)
+    request.onerror = () => reject(request.error)
+  })
+}
+
+async function saveRecording(item: Recording) {
+  const db = await openDatabase()
+
+  return new Promise<void>((resolve, reject) => {
+    const tx = db.transaction(STORE_NAME, 'readwrite')
+
+    tx.objectStore(STORE_NAME).put({
+      id: item.id,
+      name: item.name,
+      date: item.date,
+      blob: item.blob,
+    })
+
+    tx.oncomplete = () => {
+      db.close()
+      resolve()
+    }
+
+    tx.onerror = () => {
+      db.close()
+      reject(tx.error)
+    }
+  })
+}
+
+async function loadRecordings(): Promise<Array<Omit<Recording, 'url'>>> {
+  const db = await openDatabase()
+
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(STORE_NAME, 'readonly')
+    const request = tx.objectStore(STORE_NAME).getAll()
+
+    request.onsuccess = () => {
+      db.close()
+      resolve(request.result)
+    }
+
+    request.onerror = () => {
+      db.close()
+      reject(request.error)
+    }
+  })
+}
+
+async function removeStoredRecording(id: string) {
+  const db = await openDatabase()
+
+  return new Promise<void>((resolve, reject) => {
+    const tx = db.transaction(STORE_NAME, 'readwrite')
+    tx.objectStore(STORE_NAME).delete(id)
+
+    tx.oncomplete = () => {
+      db.close()
+      resolve()
+    }
+
+    tx.onerror = () => {
+      db.close()
+      reject(tx.error)
+    }
+  })
+}
+
+function getStories(): Story[] {
+  try {
+    return JSON.parse(
+      localStorage.getItem('jalvaani-stories') || '[]',
+    )
+  } catch {
+    return []
+  }
+}
 function App() {
-  const [online, setOnline] = useState(navigator.onLine)
-  const [recording, setRecording] = useState(false)
-  const [recordings, setRecordings] = useState<Recording[]>([])
-  const [transcript, setTranscript] = useState(
-    () =>
-      localStorage.getItem(TRANSCRIPT_KEY) ||
-      'Sample transcript: The sea is our home, and its stories belong to the people who live beside it.'
-  )
-  const [story, setStory] = useState('')
-  const [storyTitle, setStoryTitle] = useState('')
-  const [speaker, setSpeaker] = useState('')
-  const [consent, setConsent] = useState(false)
-  const [stories, setStories] = useState<Story[]>([])
-  const [notice, setNotice] = useState('')
-  const [busy] = useState(false)
+  const [languages, setLanguages] =
+    useState<Language[]>(fallbackLanguages)
 
-  const mediaRecorder = useRef<MediaRecorder | null>(null)
-  const chunks = useRef<Blob[]>([])
-  const recordingsRef = useRef<Recording[]>([])
+  const [selectedLanguage, setSelectedLanguage] =
+    useState('hi-IN')
 
+  const [recordings, setRecordings] =
+    useState<Recording[]>([])
+
+  const [stories, setStories] =
+    useState<Story[]>([])
+
+  const [isRecording, setIsRecording] =
+    useState(false)
+
+  const [isTranscribing, setIsTranscribing] =
+    useState(false)
+
+  const [selectedRecording, setSelectedRecording] =
+    useState<string | null>(null)
+
+  const [transcript, setTranscript] =
+    useState('')
+
+  const [storyTitle, setStoryTitle] =
+    useState('')
+
+  const [storyConsent, setStoryConsent] =
+    useState(false)
+
+  const [message, setMessage] =
+    useState('Loading JalVaani...')
+
+  const [isOnline, setIsOnline] =
+    useState(navigator.onLine)
+
+  const [activeTab, setActiveTab] =
+    useState<'dashboard' | 'recordings' | 'stories'>(
+      'dashboard',
+    )
+
+
+
+  const mediaRecorderRef =
+    useRef<MediaRecorder | null>(null)
+
+  const audioChunksRef =
+    useRef<Blob[]>([])
+
+  const streamRef =
+    useRef<MediaStream | null>(null)
+
+  const recordingStartRef =
+    useRef<number>(0)
+
+  // Load saved recordings and stories from this device.
   useEffect(() => {
-    recordingsRef.current = recordings
-  }, [recordings])
+    let cancelled = false
 
-  useEffect(() => {
-    let active = true
-
-    const handleOnline = () => setOnline(true)
-    const handleOffline = () => setOnline(false)
-
-    window.addEventListener('online', handleOnline)
-    window.addEventListener('offline', handleOffline)
-
-    async function loadSavedRecordings() {
+    async function loadLocalData() {
       try {
-        const saved: StoredRecording[] = await getRecordings()
+        const saved = await loadRecordings()
 
-        if (!active) return
+        if (!cancelled) {
+          setRecordings(
+            saved
+              .map((item) => ({
+                ...item,
+                url: URL.createObjectURL(item.blob),
+              }))
+              .sort(
+                (a, b) =>
+                  new Date(b.date).getTime() -
+                  new Date(a.date).getTime(),
+              ),
+          )
 
-        const loaded = saved.map((item) => ({
-          id: item.id,
-          name: item.name,
-          date: new Date(item.date).toLocaleString(),
-          url: URL.createObjectURL(item.blob),
-        }))
+          setStories(getStories())
+          setMessage('Your workspace is ready.')
+        }
+      } catch (error) {
+        console.error('Could not load local data:', error)
 
-        setRecordings(loaded)
-      } catch {
-        if (active) {
-          setNotice('Could not load saved recordings. Please refresh and try again.')
+        if (!cancelled) {
+          setStories(getStories())
+          setMessage(
+            'Local storage could not be opened. Please use a supported browser.',
+          )
         }
       }
     }
 
-    try {
-      const savedStories = localStorage.getItem(STORIES_KEY)
-      if (savedStories) {
-        setStories(JSON.parse(savedStories) as Story[])
-      }
-    } catch {
-      // Continue if saved story data cannot be read.
-    }
-
-    void loadSavedRecordings()
+    void loadLocalData()
 
     return () => {
-      active = false
-      window.removeEventListener('online', handleOnline)
-      window.removeEventListener('offline', handleOffline)
-
-      recordingsRef.current.forEach((item) => {
-        URL.revokeObjectURL(item.url)
-      })
+      cancelled = true
     }
   }, [])
 
-  async function startRecording() {
-    if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) {
-      setNotice('Audio recording is not supported in this browser. Please try a current version of Chrome.')
-      return
+  // Load supported languages from the backend.
+  useEffect(() => {
+    let cancelled = false
+
+    async function loadLanguages() {
+      try {
+        const response = await fetch(
+          `${API_BASE_URL}/api/languages`,
+        )
+
+        if (!response.ok) {
+          throw new Error('Language service unavailable')
+        }
+
+        const result = await response.json()
+
+        const rawLanguages = Array.isArray(result)
+          ? result
+          : Array.isArray(result.languages)
+            ? result.languages
+            : Array.isArray(result.data)
+              ? result.data
+              : []
+
+        const normalized: Language[] = rawLanguages
+          .map((item: any) => ({
+            code:
+              item.code ??
+              item.language_code ??
+              item.languageCode ??
+              '',
+            name:
+              item.name ??
+              item.language ??
+              item.display_name ??
+              item.language_name ??
+              '',
+          }))
+          .filter(
+            (item: Language) =>
+              item.code && item.name,
+          )
+
+        if (!cancelled && normalized.length > 0) {
+          setLanguages(normalized)
+
+          if (
+            !normalized.some(
+              (language) =>
+                language.code === selectedLanguage,
+            )
+          ) {
+            setSelectedLanguage(normalized[0].code)
+          }
+        }
+      } catch (error) {
+        console.warn(
+          'Using fallback languages:',
+          error,
+        )
+      }
     }
 
+    void loadLanguages()
+
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  // Keep the connection indicator up to date.
+  useEffect(() => {
+    const updateOnlineStatus = () => {
+      setIsOnline(navigator.onLine)
+    }
+
+    window.addEventListener(
+      'online',
+      updateOnlineStatus,
+    )
+
+    window.addEventListener(
+      'offline',
+      updateOnlineStatus,
+    )
+
+    return () => {
+      window.removeEventListener(
+        'online',
+        updateOnlineStatus,
+      )
+
+      window.removeEventListener(
+        'offline',
+        updateOnlineStatus,
+      )
+    }
+  }, [])
+
+  // Release temporary audio URLs when the component closes.
+  useEffect(() => {
+    return () => {
+      recordings.forEach((recording) => {
+        URL.revokeObjectURL(recording.url)
+      })
+
+      streamRef.current
+        ?.getTracks()
+        .forEach((track) => track.stop())
+    }
+  }, [recordings])
+
+  // Start recording audio.
+  async function startRecording() {
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
-      chunks.current = []
+      if (!navigator.mediaDevices?.getUserMedia) {
+        throw new Error(
+          'Audio recording is not supported in this browser. Open the website using HTTPS.',
+        )
+      }
+
+      const stream =
+        await navigator.mediaDevices.getUserMedia({
+          audio: true,
+        })
+
+      streamRef.current = stream
+      audioChunksRef.current = []
 
       const recorder = new MediaRecorder(stream)
-      mediaRecorder.current = recorder
+      mediaRecorderRef.current = recorder
+      recordingStartRef.current = Date.now()
 
       recorder.ondataavailable = (event) => {
         if (event.data.size > 0) {
-          chunks.current.push(event.data)
+          audioChunksRef.current.push(event.data)
         }
       }
 
       recorder.onstop = async () => {
-        const blob = new Blob(chunks.current, {
-          type: recorder.mimeType || 'audio/webm',
-        })
-
-        const savedItem: StoredRecording = {
-          id: crypto.randomUUID(),
-          name: `Coastal recording ${new Date().toLocaleTimeString()}`,
-          date: new Date().toISOString(),
-          blob,
-        }
-
         try {
-          await saveRecording(savedItem)
+          const audioBlob = new Blob(
+            audioChunksRef.current,
+            {
+              type: recorder.mimeType || 'audio/webm',
+            },
+          )
 
-          const displayItem: Recording = {
-            id: savedItem.id,
-            name: savedItem.name,
-            date: new Date(savedItem.date).toLocaleString(),
-            url: URL.createObjectURL(blob),
+          if (audioBlob.size === 0) {
+            setMessage('No audio was recorded. Please try again.')
+            return
           }
 
-          setRecordings((current) => [displayItem, ...current])
-          setNotice('Recording saved on this device. You can play it again later in this browser.')
-        } catch {
-          setNotice('The recording was made, but could not be saved. Check available browser storage and try again.')
+          const now = new Date()
+          const item: Recording = {
+            id: crypto.randomUUID(),
+            name: `Recording ${now.toLocaleString()}`,
+            date: now.toISOString(),
+            blob: audioBlob,
+            url: URL.createObjectURL(audioBlob),
+          }
+
+          await saveRecording(item)
+
+          setRecordings((previous) =>
+            [item, ...previous],
+          )
+
+          setSelectedRecording(item.id)
+          setTranscript('')
+          setMessage(
+            'Recording saved on this device. Select it to transcribe.',
+          )
+        } catch (error) {
+          console.error('Save recording failed:', error)
+          setMessage(
+            'Could not save the recording. Check your browser storage.',
+          )
         } finally {
           stream.getTracks().forEach((track) => track.stop())
-          setRecording(false)
+          streamRef.current = null
+          setIsRecording(false)
         }
       }
 
       recorder.start()
-      setRecording(true)
-      setNotice('Recording in progress. Speak clearly near your microphone.')
-    } catch {
-      setNotice('Microphone access was not granted. Allow microphone access in your browser and try again.')
+      setIsRecording(true)
+      setMessage('Recording in progress. Speak clearly.')
+    } catch (error) {
+      console.error('Recording failed:', error)
+
+      setMessage(
+        error instanceof Error
+          ? error.message
+          : 'Microphone access failed. Allow microphone permission and try again.',
+      )
+
+      streamRef.current
+        ?.getTracks()
+        .forEach((track) => track.stop())
+
+      streamRef.current = null
+      setIsRecording(false)
     }
   }
 
+  // Stop recording.
   function stopRecording() {
-    if (mediaRecorder.current?.state === 'recording') {
-      mediaRecorder.current.stop()
+    const recorder = mediaRecorderRef.current
+
+    if (recorder && recorder.state !== 'inactive') {
+      recorder.stop()
+      setMessage('Finishing and saving your recording...')
     }
   }
 
-  async function removeRecording(item: Recording) {
+  // Send an audio recording to the backend for transcription.
+  async function transcribeRecording(recording: Recording) {
+    if (!navigator.onLine) {
+      setMessage(
+        'You are offline. Your recording is saved locally. Connect to the internet to transcribe it.',
+      )
+      return
+    }
+
+    setIsTranscribing(true)
+    setSelectedRecording(recording.id)
+    setMessage('Transcribing audio. Please wait...')
+
     try {
-      await deleteRecording(item.id)
-      URL.revokeObjectURL(item.url)
-      setRecordings((current) => current.filter((recordingItem) => recordingItem.id !== item.id))
-      setNotice('Recording deleted from this device.')
-    } catch {
-      setNotice('Could not delete this recording. Please try again.')
+      const formData = new FormData()
+
+      formData.append(
+        'audio',
+        recording.blob,
+        `${recording.id}.webm`,
+      )
+
+      formData.append('language_code', selectedLanguage)
+
+      const response = await fetch(
+        `${API_BASE_URL}/api/transcribe`,
+        {
+          method: 'POST',
+          body: formData,
+        },
+      )
+
+      const result = await response.json().catch(() => null)
+
+      if (!response.ok) {
+        throw new Error(
+          result?.detail ||
+            result?.message ||
+            `Transcription failed (HTTP ${response.status}).`,
+        )
+      }
+
+      const text =
+        result?.transcript ??
+        result?.transcription ??
+        result?.text ??
+        result?.result?.text ??
+        result?.data?.transcript ??
+        result?.data?.text
+
+      if (typeof text !== 'string' || !text.trim()) {
+        throw new Error(
+          'The backend response did not contain transcript text. Ask your backend teammate for the exact response format.',
+        )
+      }
+
+      setTranscript(text)
+      setMessage('Transcription complete. Review and edit the text below.')
+    } catch (error) {
+      console.error('Transcription error:', error)
+
+      setMessage(
+        error instanceof Error
+          ? error.message
+          : 'Transcription failed. Please try again.',
+      )
+    } finally {
+      setIsTranscribing(false)
     }
   }
 
+  // Delete a recording from this device.
+  async function deleteRecording(id: string) {
+    const recording = recordings.find(
+      (item) => item.id === id,
+    )
+
+    if (!recording) return
+
+    try {
+      await removeStoredRecording(id)
+
+      URL.revokeObjectURL(recording.url)
+
+      setRecordings((previous) =>
+        previous.filter((item) => item.id !== id),
+      )
+
+      if (selectedRecording === id) {
+        setSelectedRecording(null)
+        setTranscript('')
+      }
+
+      setMessage('Recording deleted from this device.')
+    } catch (error) {
+      console.error('Delete recording failed:', error)
+      setMessage('Could not delete this recording.')
+    }
+  }
+
+  // Save an edited transcript locally.
   function saveTranscript() {
+    if (!selectedRecording) {
+      setMessage('Select a recording before saving its transcript.')
+      return
+    }
+
     try {
-      localStorage.setItem(TRANSCRIPT_KEY, transcript)
-      setNotice('Transcript saved in this browser.')
-    } catch {
-      setNotice('Could not save the transcript. Check browser storage and try again.')
+      const key = 'jalvaani-transcripts'
+
+      const saved: Record<string, string> = JSON.parse(
+        localStorage.getItem(key) || '{}',
+      )
+
+      saved[selectedRecording] = transcript
+
+      localStorage.setItem(key, JSON.stringify(saved))
+
+      setMessage('Transcript saved on this device.')
+    } catch (error) {
+      console.error('Save transcript failed:', error)
+      setMessage('Could not save the transcript.')
     }
   }
 
+  // Load a saved transcript when a recording is selected.
+  function selectRecording(recording: Recording) {
+    setSelectedRecording(recording.id)
+
+    try {
+      const saved: Record<string, string> = JSON.parse(
+        localStorage.getItem('jalvaani-transcripts') || '{}',
+      )
+
+      setTranscript(saved[recording.id] || '')
+    } catch {
+      setTranscript('')
+    }
+
+    setMessage(`Selected: ${recording.name}`)
+  }
+
+  // Save a story only after the user gives consent.
   function saveStory() {
-    if (!storyTitle.trim() || !speaker.trim() || !story.trim()) {
-      setNotice('Please enter a story title, speaker name, and story before saving.')
+    if (!storyConsent) {
+      setMessage(
+        'Please give consent before saving this story.',
+      )
       return
     }
 
-    if (!consent) {
-      setNotice('Please confirm consent before saving this story.')
+    if (!storyTitle.trim() || !transcript.trim()) {
+      setMessage(
+        'Enter a story title and transcript before saving.',
+      )
       return
-    }
-
-    const newStory: Story = {
-      id: crypto.randomUUID(),
-      title: storyTitle.trim(),
-      speaker: speaker.trim(),
-      story: story.trim(),
-      date: new Date().toLocaleString(),
     }
 
     try {
-      const updatedStories = [newStory, ...stories]
-      localStorage.setItem(STORIES_KEY, JSON.stringify(updatedStories))
+      const story: Story = {
+        id: crypto.randomUUID(),
+        title: storyTitle.trim(),
+        language: selectedLanguage,
+        text: transcript.trim(),
+        date: new Date().toISOString(),
+      }
+
+      const updatedStories = [story, ...getStories()]
+
+      localStorage.setItem(
+        'jalvaani-stories',
+        JSON.stringify(updatedStories),
+      )
+
       setStories(updatedStories)
       setStoryTitle('')
-      setSpeaker('')
-      setStory('')
-      setConsent(false)
-      setNotice('Story saved locally with the consent confirmation you provided.')
-    } catch {
-      setNotice('Could not save the story. Check browser storage and try again.')
+      setStoryConsent(false)
+      setMessage('Story saved locally with your consent.')
+    } catch (error) {
+      console.error('Save story failed:', error)
+      setMessage('Could not save the story.')
     }
   }
 
-  function removeStory(id: string) {
-    const updatedStories = stories.filter((item) => item.id !== id)
+  // Delete a saved story.
+  function deleteStory(id: string) {
+    const updatedStories = getStories().filter(
+      (story) => story.id !== id,
+    )
 
-    try {
-      localStorage.setItem(STORIES_KEY, JSON.stringify(updatedStories))
-      setStories(updatedStories)
-      setNotice('Story removed from this browser.')
-    } catch {
-      setNotice('Could not update saved stories. Please try again.')
-    }
+    localStorage.setItem(
+      'jalvaani-stories',
+      JSON.stringify(updatedStories),
+    )
+
+    setStories(updatedStories)
+    setMessage('Story deleted from this device.')
   }
+
+  const styles = `
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont,
+        "Segoe UI", sans-serif;
+      background: #f3f7f6;
+      color: #173b38;
+    }
+
+    button, input, select, textarea {
+      font: inherit;
+    }
+
+    button {
+      cursor: pointer;
+    }
+
+    button:disabled {
+      cursor: not-allowed;
+      opacity: 0.55;
+    }
+
+    .app {
+      min-height: 100vh;
+    }
+
+    .topbar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 16px;
+      padding: 18px 5%;
+      background: #ffffff;
+      border-bottom: 1px solid #dfe9e6;
+      position: sticky;
+      top: 0;
+      z-index: 10;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .brand-icon {
+      width: 44px;
+      height: 44px;
+      display: grid;
+      place-items: center;
+      border-radius: 14px;
+      background: #d9f4e9;
+      font-size: 24px;
+    }
+
+    .brand h1 {
+      margin: 0;
+      font-size: 22px;
+      letter-spacing: -0.6px;
+    }
+
+    .brand p {
+      margin: 3px 0 0;
+      color: #64807b;
+      font-size: 12px;
+    }
+
+    .status {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 9px 13px;
+      border-radius: 999px;
+      background: #e8f7ee;
+      color: #247447;
+      font-size: 13px;
+      font-weight: 650;
+    }
+
+    .status.offline {
+      background: #fff0d9;
+      color: #8c5a0b;
+    }
+
+    .layout {
+      width: min(1180px, 92%);
+      margin: 28px auto 50px;
+    }
+
+    .hero {
+      padding: 32px;
+      border-radius: 24px;
+      background: linear-gradient(120deg, #124e48, #187967);
+      color: white;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 24px;
+      overflow: hidden;
+    }
+
+    .hero h2 {
+      margin: 0 0 12px;
+      font-size: clamp(26px, 4vw, 38px);
+      letter-spacing: -1px;
+    }
+
+    .hero p {
+      max-width: 620px;
+      line-height: 1.7;
+      margin: 0;
+      color: #d7eee8;
+    }
+
+    .hero-symbol {
+      font-size: 68px;
+      flex-shrink: 0;
+    }
+
+    .section-title {
+      margin: 30px 0 16px;
+      font-size: 20px;
+    }
+
+    .nav {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin: 24px 0;
+    }
+
+    .nav button {
+      border: 1px solid #d8e5e1;
+      border-radius: 12px;
+      padding: 11px 17px;
+      color: #355c55;
+      background: white;
+      font-weight: 600;
+    }
+
+    .nav button.active {
+      background: #175f54;
+      border-color: #175f54;
+      color: white;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 18px;
+    }
+
+    .card {
+      min-width: 0;
+      padding: 23px;
+      border-radius: 20px;
+      background: white;
+      border: 1px solid #e1ebe7;
+      box-shadow: 0 5px 20px rgba(25, 70, 60, 0.035);
+    }
+
+    .card h3 {
+      margin: 0 0 10px;
+      font-size: 18px;
+    }
+
+    .muted {
+      color: #6b827c;
+      font-size: 14px;
+      line-height: 1.6;
+    }
+
+    .field {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      margin: 17px 0;
+    }
+
+    .field label {
+      font-size: 13px;
+      font-weight: 700;
+      color: #365b54;
+    }
+
+    .field input,
+    .field select,
+    .field textarea {
+      width: 100%;
+      border: 1px solid #d7e4df;
+      border-radius: 11px;
+      padding: 12px 13px;
+      outline: none;
+      background: #fcfefd;
+      color: #173b38;
+    }
+
+    .field input:focus,
+    .field select:focus,
+    .field textarea:focus {
+      border-color: #248b75;
+      box-shadow: 0 0 0 3px #d9f4e9;
+    }
+
+    .field textarea {
+      min-height: 155px;
+      resize: vertical;
+      line-height: 1.65;
+    }
+
+    .actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-top: 16px;
+    }
+
+    .btn {
+      border: 0;
+      border-radius: 11px;
+      padding: 11px 16px;
+      background: #17685a;
+      color: white;
+      font-weight: 650;
+    }
+
+    .btn:hover:not(:disabled) {
+      background: #105447;
+    }
+
+    .btn.secondary {
+      background: #e8f4ef;
+      color: #176052;
+    }
+
+    .btn.secondary:hover:not(:disabled) {
+      background: #d7ebe2;
+    }
+
+    .btn.danger {
+      background: #fff0ee;
+      color: #a13d35;
+    }
+
+    .btn.danger:hover:not(:disabled) {
+      background: #ffe0dc;
+    }
+
+    .message {
+      margin: 18px 0;
+      padding: 13px 16px;
+      border-radius: 12px;
+      background: #e6f4ee;
+      color: #225c4b;
+      line-height: 1.5;
+      font-size: 14px;
+      overflow-wrap: anywhere;
+    }
+
+    .recording-item,
+    .story-item {
+      padding: 16px 0;
+      border-bottom: 1px solid #e8efec;
+    }
+
+    .recording-item:last-child,
+    .story-item:last-child {
+      border-bottom: 0;
+    }
+
+    .item-title {
+      margin: 0 0 6px;
+      font-weight: 700;
+      overflow-wrap: anywhere;
+    }
+
+    .item-date {
+      color: #758a84;
+      font-size: 12px;
+      margin-bottom: 12px;
+    }
+
+    .consent {
+      display: flex;
+      align-items: flex-start;
+      gap: 10px;
+      margin: 15px 0;
+      font-size: 13px;
+      line-height: 1.6;
+      color: #496b63;
+    }
+
+    .consent input {
+      margin-top: 4px;
+      accent-color: #17685a;
+    }
+
+    .empty {
+      padding: 22px 0;
+      color: #789089;
+      font-size: 14px;
+      line-height: 1.6;
+    }
+
+    .footer {
+      text-align: center;
+      padding: 24px 12px;
+      color: #789089;
+      font-size: 12px;
+    }
+
+    @media (max-width: 700px) {
+      .topbar {
+        padding: 14px 4%;
+        align-items: flex-start;
+      }
+
+      .brand h1 {
+        font-size: 19px;
+      }
+
+      .brand p {
+        max-width: 175px;
+        line-height: 1.4;
+      }
+
+      .status {
+        padding: 8px 10px;
+        font-size: 11px;
+      }
+
+      .layout {
+        width: 92%;
+        margin-top: 18px;
+      }
+
+      .hero {
+        padding: 24px 20px;
+        border-radius: 18px;
+      }
+
+      .hero-symbol {
+        display: none;
+      }
+
+      .grid {
+        grid-template-columns: 1fr;
+      }
+
+      .card {
+        padding: 19px;
+      }
+
+      .nav button {
+        flex: 1;
+        padding: 10px;
+      }
+
+      .actions .btn {
+        flex: 1;
+      }
+    }
+  `
 
   return (
-    <main className="app-shell">
-      <header className="topbar">
-        <a className="brand" href="#home" aria-label="JalVaani home">
-          <span className="brand-mark">J</span>
-          <span>
-            <strong>JalVaani</strong>
-            <small>Coastal voice intelligence</small>
-          </span>
-        </a>
+    <>
+      <style>{styles}</style>
 
-        <nav className="nav-links" aria-label="Main navigation">
-          <a href="#voice">Voice Studio</a>
-          <a href="#transcript">Transcript</a>
-          <a href="#stories">YaadVault</a>
-        </nav>
-
-        <div className={`connection-pill ${online ? 'is-online' : 'is-offline'}`}>
-          <span className="status-dot" />
-          {online ? 'Online' : 'Offline'}
-        </div>
-      </header>
-
-      <section className="hero-section" id="home">
-        <div className="hero-copy">
-          <span className="eyebrow">VOICE • LANGUAGE • HERITAGE</span>
-          <h1>Every coastal voice deserves to be heard.</h1>
-          <p>
-            Capture voices, review transcripts, and preserve coastal stories
-            in one simple workspace—even when your connection is unreliable.
-          </p>
-          <div className="hero-actions">
-            <a className="primary-button" href="#voice">Open Voice Studio</a>
-            <a className="secondary-button" href="#stories">Preserve a story</a>
-          </div>
-          <p className="hero-note">
-            Your recordings and stories are stored in this browser on this device.
-          </p>
-        </div>
-
-        <div className="hero-visual" aria-label="JalVaani ocean-inspired illustration">
-          <div className="sun-orb" />
-          <div className="wave wave-one" />
-          <div className="wave wave-two" />
-          <div className="wave wave-three" />
-          <div className="hero-visual-label">
-            <span>01 / LISTEN</span>
-            <strong>Voices carry our history.</strong>
-          </div>
-        </div>
-      </section>
-
-      <section className="stats-grid" aria-label="Workspace summary">
-        <article className="stat-card">
-          <span className="stat-icon">◉</span>
-          <div>
-            <strong>{recordings.length}</strong>
-            <span>Saved recordings</span>
-          </div>
-        </article>
-        <article className="stat-card">
-          <span className="stat-icon">Aa</span>
-          <div>
-            <strong>{transcript.trim() ? transcript.trim().split(/\s+/).length : 0}</strong>
-            <span>Transcript words</span>
-          </div>
-        </article>
-        <article className="stat-card">
-          <span className="stat-icon">⌂</span>
-          <div>
-            <strong>{stories.length}</strong>
-            <span>Saved stories</span>
-          </div>
-        </article>
-        <article className="stat-card">
-          <span className="stat-icon">↯</span>
-          <div>
-            <strong>{online ? 'Connected' : 'Offline'}</strong>
-            <span>Connection status</span>
-          </div>
-        </article>
-      </section>
-
-      {notice && (
-        <div className="notice-banner" role="status">
-          <span>{notice}</span>
-          <button
-            type="button"
-            className="notice-close"
-            onClick={() => setNotice('')}
-            aria-label="Dismiss message"
-          >
-            ×
-          </button>
-        </div>
-      )}
-
-      <section className="workspace-section" id="voice">
-        <div className="section-heading">
-          <div>
-            <span className="eyebrow">01 / CAPTURE</span>
-            <h2>Voice Studio</h2>
-            <p>Record coastal voices and keep the audio saved locally.</p>
-          </div>
-          <span className="section-tag">Local audio storage</span>
-        </div>
-
-        <div className="workspace-grid">
-          <article className="panel recording-panel">
-            <div className="panel-heading">
-              <div>
-                <span className="mini-label">AUDIO RECORDER</span>
-                <h3>Capture a voice</h3>
-              </div>
-              <span className={`record-indicator ${recording ? 'recording-now' : ''}`}>
-                <span className="status-dot" />
-                {recording ? 'Recording' : 'Ready'}
-              </span>
-            </div>
-
-            <div className="recorder-illustration">
-              <div className={`mic-circle ${recording ? 'mic-active' : ''}`}>
-                <svg viewBox="0 0 24 24" aria-hidden="true">
-                  <rect x="9" y="2" width="6" height="13" rx="3" />
-                  <path d="M5 11a7 7 0 0 0 14 0M12 18v4M8 22h8" />
-                </svg>
-              </div>
-              <div className="sound-bars" aria-hidden="true">
-                {Array.from({ length: 23 }, (_, index) => (
-                  <span
-                    key={index}
-                    style={{ height: `${12 + ((index * 17) % 35)}px` }}
-                  />
-                ))}
-              </div>
-            </div>
-
-            <p className="recorder-description">
-              {recording
-                ? 'Speak now. Select Stop recording when you are finished.'
-                : 'Use your microphone to capture a local audio recording.'}
-            </p>
-
-            <div className="button-row">
-              {!recording ? (
-                <button
-                  type="button"
-                  className="primary-button"
-                  onClick={() => void startRecording()}
-                  disabled={busy}
-                >
-                  ● Start recording
-                </button>
-              ) : (
-                <button
-                  type="button"
-                  className="danger-button"
-                  onClick={stopRecording}
-                >
-                  ■ Stop recording
-                </button>
-              )}
-            </div>
-
-            <div className="privacy-note">
-              <span>✓</span>
-              Audio is saved in this browser's local database. It is not uploaded to a server.
-            </div>
-          </article>
-
-          <article className="panel recordings-panel">
-            <div className="panel-heading">
-              <div>
-                <span className="mini-label">YOUR AUDIO</span>
-                <h3>Saved recordings</h3>
-              </div>
-              <span className="count-badge">{recordings.length}</span>
-            </div>
-
-            {recordings.length === 0 ? (
-              <div className="empty-state">
-                <span className="empty-icon">♫</span>
-                <strong>No recordings yet</strong>
-                <p>Your saved audio recordings will appear here.</p>
-              </div>
-            ) : (
-              <div className="recording-list">
-                {recordings.map((item) => (
-                  <article className="recording-item" key={item.id}>
-                    <div className="recording-file-icon">♫</div>
-                    <div className="recording-details">
-                      <strong>{item.name}</strong>
-                      <small>{item.date}</small>
-                      <audio controls preload="none" src={item.url}>
-                        Your browser does not support audio playback.
-                      </audio>
-                    </div>
-                    <button
-                      type="button"
-                      className="text-button"
-                      onClick={() => void removeRecording(item)}
-                    >
-                      Delete
-                    </button>
-                  </article>
-                ))}
-              </div>
-            )}
-
-            <p className="subtle-note">
-              Saved recordings are available in this browser on this device. Clearing site data may delete them.
-            </p>
-          </article>
-        </div>
-      </section>
-
-      <section className="workspace-section" id="transcript">
-        <div className="section-heading">
-          <div>
-            <span className="eyebrow">02 / REVIEW</span>
-            <h2>Transcript Desk</h2>
-            <p>Edit text and save your corrections locally.</p>
-          </div>
-          <span className="section-tag">Editable text</span>
-        </div>
-
-        <div className="panel transcript-panel">
-          <div className="panel-heading">
+      <div className="app">
+        <header className="topbar">
+          <div className="brand">
+            <div className="brand-icon">🌊</div>
             <div>
-              <span className="mini-label">TRANSCRIPT WORKSPACE</span>
-              <h3>Review the words</h3>
+              <h1>JalVaani</h1>
+              <p>Voice intelligence for coastal communities</p>
             </div>
-            <span className="mock-badge">DEMO TEXT</span>
           </div>
 
-          <div className="transcript-warning">
-            <span>i</span>
-            This is sample text, not a transcript generated by Gnani AI. Replace it with your verified transcript.
+          <div className={`status ${isOnline ? '' : 'offline'}`}>
+            <span>{isOnline ? '●' : '●'}</span>
+            {isOnline ? 'Online' : 'Offline'}
           </div>
+        </header>
 
-          <label className="field-label" htmlFor="transcript-text">
-            Transcript text
-          </label>
-          <textarea
-            id="transcript-text"
-            className="transcript-editor"
-            value={transcript}
-            onChange={(event) => setTranscript(event.target.value)}
-            rows={7}
-            placeholder="Enter or edit the transcript here..."
-          />
-
-          <div className="transcript-footer">
-            <span>{transcript.trim() ? transcript.trim().split(/\s+/).length : 0} words</span>
-            <button type="button" className="primary-button" onClick={saveTranscript}>
-              Save transcript
-            </button>
-          </div>
-
-          <div className="review-tip">
-            <strong>Review tip</strong>
-            <p>
-              Double-check names, dates, amounts, directions, and dialect-specific words with the speaker or audio. Do not assume an automatically flagged word is wrong.
-            </p>
-          </div>
-        </div>
-      </section>
-
-      <section className="workspace-section" id="stories">
-        <div className="section-heading">
-          <div>
-            <span className="eyebrow">03 / PRESERVE</span>
-            <h2>YaadVault</h2>
-            <p>Keep community stories, sayings, and coastal memories.</p>
-          </div>
-          <span className="section-tag">Consent-first archive</span>
-        </div>
-
-        <div className="workspace-grid story-grid">
-          <article className="panel story-form-panel">
-            <div className="panel-heading">
-              <div>
-                <span className="mini-label">COMMUNITY ARCHIVE</span>
-                <h3>Preserve a story</h3>
-              </div>
-              <span className="story-symbol">✳</span>
+        <main className="layout">
+          <section className="hero">
+            <div>
+              <h2>Every voice deserves to be understood.</h2>
+              <p>
+                Record local voices, transcribe speech, review uncertain
+                words, and preserve community stories with consent.
+                Your recordings are saved on this device.
+              </p>
             </div>
+            <div className="hero-symbol">🎙️</div>
+          </section>
 
-            <form
-              onSubmit={(event) => {
-                event.preventDefault()
-                saveStory()
-              }}
+          <nav className="nav" aria-label="Main navigation">
+            <button
+              className={activeTab === 'dashboard' ? 'active' : ''}
+              onClick={() => setActiveTab('dashboard')}
             >
-              <label className="field-label" htmlFor="story-title">Story title</label>
-              <input
-                id="story-title"
-                value={storyTitle}
-                onChange={(event) => setStoryTitle(event.target.value)}
-                placeholder="e.g. The monsoon and the sea"
-                required
-              />
+              Dashboard
+            </button>
 
-              <label className="field-label" htmlFor="speaker-name">Speaker or storyteller</label>
-              <input
-                id="speaker-name"
-                value={speaker}
-                onChange={(event) => setSpeaker(event.target.value)}
-                placeholder="Name or chosen community label"
-                required
-              />
+            <button
+              className={activeTab === 'recordings' ? 'active' : ''}
+              onClick={() => setActiveTab('recordings')}
+            >
+              Recordings ({recordings.length})
+            </button>
 
-              <label className="field-label" htmlFor="story-text">Story, proverb, or memory</label>
-              <textarea
-                id="story-text"
-                value={story}
-                onChange={(event) => setStory(event.target.value)}
-                rows={5}
-                placeholder="Write the story in the speaker's own words..."
-                required
-              />
+            <button
+              className={activeTab === 'stories' ? 'active' : ''}
+              onClick={() => setActiveTab('stories')}
+            >
+              YaadVault ({stories.length})
+            </button>
+          </nav>
 
-              <label className="consent-option">
-                <input
-                  type="checkbox"
-                  checked={consent}
-                  onChange={(event) => setConsent(event.target.checked)}
-                />
-                <span>
-                  I confirm that the speaker has agreed to save this story in this browser for this demo.
-                </span>
-              </label>
+          <div className="message" role="status" aria-live="polite">
+            {message}
+          </div>
 
-              <button type="submit" className="primary-button">
-                Save story locally
-              </button>
-            </form>
+          {activeTab === 'dashboard' && (
+            <>
+              <h2 className="section-title">Voice workspace</h2>
 
-            <p className="subtle-note">
-              This demo stores stories only in this browser. It does not publish or upload them.
-            </p>
-          </article>
+              <div className="grid">
+                <section className="card">
+                  <h3>🎙️ Record your voice</h3>
+                  <p className="muted">
+                    Choose a language and record a short voice sample.
+                    Allow microphone access when your browser asks.
+                  </p>
 
-          <article className="panel saved-stories-panel">
-            <div className="panel-heading">
-              <div>
-                <span className="mini-label">YOUR COLLECTION</span>
-                <h3>Saved stories</h3>
-              </div>
-              <span className="count-badge">{stories.length}</span>
-            </div>
+                  <div className="field">
+                    <label htmlFor="language">
+                      Transcription language
+                    </label>
 
-            {stories.length === 0 ? (
-              <div className="empty-state">
-                <span className="empty-icon">⌂</span>
-                <strong>Your archive starts here</strong>
-                <p>Stories you save with consent will appear in this list.</p>
-              </div>
-            ) : (
-              <div className="saved-story-list">
-                {stories.map((item) => (
-                  <article className="saved-story" key={item.id}>
-                    <div className="saved-story-top">
-                      <span className="story-symbol">✳</span>
+                    <select
+                      id="language"
+                      value={selectedLanguage}
+                      onChange={(event) =>
+                        setSelectedLanguage(event.target.value)
+                      }
+                    >
+                      {languages.map((language) => (
+                        <option
+                          key={language.code}
+                          value={language.code}
+                        >
+                          {language.name} ({language.code})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div className="actions">
+                    {!isRecording ? (
                       <button
-                        type="button"
-                        className="text-button"
-                        onClick={() => removeStory(item.id)}
+                        className="btn"
+                        onClick={startRecording}
+                        disabled={isTranscribing}
                       >
-                        Delete
+                        Start recording
                       </button>
-                    </div>
-                    <h4>{item.title}</h4>
-                    <p className="story-byline">
-                      Shared by {item.speaker} · {item.date}
-                    </p>
-                    <p className="saved-story-content">{item.story}</p>
-                  </article>
-                ))}
-              </div>
-            )}
-          </article>
-        </div>
-      </section>
+                    ) : (
+                      <button
+                        className="btn danger"
+                        onClick={stopRecording}
+                      >
+                        Stop and save
+                      </button>
+                    )}
+                  </div>
 
-      <footer className="app-footer">
-        <a className="brand footer-brand" href="#home">
-          <span className="brand-mark">J</span>
-          <strong>JalVaani</strong>
-        </a>
-        <p>
-          When the sea gets loud, every voice deserves to be understood.
-        </p>
-        <span>Frontend prototype · Local browser storage</span>
-      </footer>
-    </main>
+                  <p className="muted">
+                    {isRecording
+                      ? 'Recording is in progress. Select Stop and save when finished.'
+                      : 'Audio stays on this device until you choose to delete it.'}
+                  </p>
+                </section>
+
+                <section className="card">
+                  <h3>📝 ContextEcho</h3>
+                  <p className="muted">
+                    Select a recording to transcribe it. Review the
+                    result carefully, especially names, numbers, dates,
+                    money amounts, and directions.
+                  </p>
+
+                  <div className="field">
+                    <label htmlFor="recording-select">
+                      Choose a recording
+                    </label>
+
+                    <select
+                      id="recording-select"
+                      value={selectedRecording ?? ''}
+                      onChange={(event) => {
+                        const recording = recordings.find(
+                          (item) => item.id === event.target.value,
+                        )
+
+                        if (recording) {
+                          selectRecording(recording)
+                        } else {
+                          setSelectedRecording(null)
+                          setTranscript('')
+                        }
+                      }}
+                    >
+                      <option value="">Select recording</option>
+
+                      {recordings.map((recording) => (
+                        <option
+                          key={recording.id}
+                          value={recording.id}
+                        >
+                          {recording.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div className="actions">
+                    <button
+                      className="btn"
+                      disabled={
+                        !selectedRecording ||
+                        isTranscribing ||
+                        isRecording
+                      }
+                      onClick={() => {
+                        const recording = recordings.find(
+                          (item) => item.id === selectedRecording,
+                        )
+
+                        if (recording) {
+                          void transcribeRecording(recording)
+                        }
+                      }}
+                    >
+                      {isTranscribing
+                        ? 'Transcribing...'
+                        : 'Transcribe audio'}
+                    </button>
+                  </div>
+
+                  {!isOnline && (
+                    <p className="muted">
+                      You are offline. Transcription requires an
+                      internet connection, but saved recordings remain
+                      available on this device.
+                    </p>
+                  )}
+                </section>
+              </div>
+
+              <h2 className="section-title">Review and save</h2>
+
+              <div className="grid">
+                <section className="card">
+                  <h3>✍️ Transcript editor</h3>
+                  <p className="muted">
+                    Edit the generated transcript before saving it.
+                    Always verify the text against the original audio.
+                  </p>
+
+                  <div className="field">
+                    <label htmlFor="transcript">
+                      Transcript text
+                    </label>
+
+                    <textarea
+                      id="transcript"
+                      value={transcript}
+                      onChange={(event) =>
+                        setTranscript(event.target.value)
+                      }
+                      placeholder="Your transcript will appear here. You can also type or correct it manually."
+                    />
+                  </div>
+
+                  <div className="actions">
+                    <button
+                      className="btn"
+                      onClick={saveTranscript}
+                      disabled={!selectedRecording}
+                    >
+                      Save transcript
+                    </button>
+                  </div>
+                </section>
+
+                <section className="card">
+                  <h3>📚 YaadVault</h3>
+                  <p className="muted">
+                    Preserve a community memory, proverb, or local
+                    expression only when the contributor has agreed.
+                  </p>
+
+                  <div className="field">
+                    <label htmlFor="story-title">
+                      Story title
+                    </label>
+
+                    <input
+                      id="story-title"
+                      value={storyTitle}
+                      onChange={(event) =>
+                        setStoryTitle(event.target.value)
+                      }
+                      placeholder="e.g. A story from our village"
+                    />
+                  </div>
+
+                  <label className="consent">
+                    <input
+                      type="checkbox"
+                      checked={storyConsent}
+                      onChange={(event) =>
+                        setStoryConsent(event.target.checked)
+                      }
+                    />
+
+                    <span>
+                      I confirm that the contributor has given
+                      permission to save this story on this device.
+                    </span>
+                  </label>
+
+                  <button
+                    className="btn"
+                    onClick={saveStory}
+                    disabled={!storyConsent || !storyTitle.trim() || !transcript.trim()}
+                  >
+                    Save story with consent
+                  </button>
+
+                  <p className="muted">
+                    Stories are stored locally in this prototype. They
+                    are not uploaded to a shared server.
+                  </p>
+                </section>
+              </div>
+            </>
+          )}
+
+          {activeTab === 'recordings' && (
+            <>
+              <h2 className="section-title">Your recordings</h2>
+
+              <section className="card">
+                <p className="muted">
+                  Recordings are stored in this browser on this device.
+                </p>
+
+                {recordings.length === 0 ? (
+                  <div className="empty">
+                    No recordings yet. Return to the Dashboard to
+                    record your first audio sample.
+                  </div>
+                ) : (
+                  recordings.map((recording) => (
+                    <div className="recording-item" key={recording.id}>
+                      <p className="item-title">{recording.name}</p>
+
+                      <p className="item-date">
+                        {new Date(recording.date).toLocaleString()}
+                      </p>
+
+                      <audio
+                        controls
+                        preload="none"
+                        src={recording.url}
+                        style={{ width: '100%', marginBottom: 12 }}
+                      />
+
+                      <div className="actions">
+                        <button
+                          className="btn secondary"
+                          onClick={() => {
+                            selectRecording(recording)
+                            setActiveTab('dashboard')
+                          }}
+                        >
+                          Edit transcript
+                        </button>
+
+                        <button
+                          className="btn secondary"
+                          disabled={isTranscribing || isRecording}
+                          onClick={() => {
+                            void transcribeRecording(recording)
+                            setActiveTab('dashboard')
+                          }}
+                        >
+                          Transcribe
+                        </button>
+
+                        <button
+                          className="btn danger"
+                          onClick={() => {
+                            if (
+                              window.confirm(
+                                'Delete this recording from this device?',
+                              )
+                            ) {
+                              void deleteRecording(recording.id)
+                            }
+                          }}
+                        >
+                          Delete
+                        </button>
+                      </div>
+                    </div>
+                  ))
+                )}
+              </section>
+            </>
+          )}
+
+          {activeTab === 'stories' && (
+            <>
+              <h2 className="section-title">
+                YaadVault — Community stories
+              </h2>
+
+              <section className="card">
+                <p className="muted">
+                  Stories saved with consent on this device.
+                </p>
+
+                {stories.length === 0 ? (
+                  <div className="empty">
+                    No stories saved yet. Create a transcript on the
+                    Dashboard and save it with consent.
+                  </div>
+                ) : (
+                  stories.map((story) => (
+                    <article className="story-item" key={story.id}>
+                      <p className="item-title">{story.title}</p>
+
+                      <p className="item-date">
+                        {new Date(story.date).toLocaleString()} ·{' '}
+                        {story.language}
+                      </p>
+
+                      <p style={{ lineHeight: 1.7, whiteSpace: 'pre-wrap' }}>
+                        {story.text}
+                      </p>
+
+                      <button
+                        className="btn danger"
+                        onClick={() => {
+                          if (
+                            window.confirm(
+                              'Delete this saved story from this device?',
+                            )
+                          ) {
+                            deleteStory(story.id)
+                          }
+                        }}
+                      >
+                        Delete story
+                      </button>
+                    </article>
+                  ))
+                )}
+              </section>
+            </>
+          )}
+        </main>
+
+        <footer className="footer">
+          JalVaani © 2026 | Empowering coastal communities through
+noise-resilient voice intelligence.
+        </footer>
+      </div>
+    </>
   )
 }
 
 export default App
+
