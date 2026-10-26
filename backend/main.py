@@ -73,6 +73,7 @@ app = FastAPI(
     version="0.5.0",
 )
 
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
@@ -80,26 +81,13 @@ app.add_middleware(
         "http://localhost:5500",
         "http://localhost:5173",
         "http://127.0.0.1:5173",
+        "https://jalvaani-frontend.onrender.com",
+        # Add the exact Vercel URL here when available
     ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-SUPPORTED_LANGUAGES = GnaniSTTClient.supported_languages()
-
-ALLOWED_TYPES = {
-    "audio/wav",
-    "audio/x-wav",
-    "audio/mpeg",
-    "audio/mp4",
-    "audio/webm",
-    "audio/ogg",
-    "audio/aac",
-    "audio/flac",
-    "audio/x-flac",
-    "application/octet-stream",
-}
 
 
 @app.get("/health")
