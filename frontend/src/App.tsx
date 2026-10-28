@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import ShorProof from './ShorProof'
 
 const API_BASE_URL =
   import.meta.env.VITE_API_BASE_URL || 'https://jalvaani.onrender.com'
@@ -167,13 +168,10 @@ function App() {
     useState(navigator.onLine)
 
   const [activeTab, setActiveTab] =
-    useState<'dashboard' | 'recordings' | 'stories'>(
-      'dashboard',
-    )
+    useState<'dashboard' | 'recordings' | 'stories' | 'shorproof'>(
+      'dashboard', )
 
-
-
-  const mediaRecorderRef =
+     const mediaRecorderRef =
     useRef<MediaRecorder | null>(null)
 
   const audioChunksRef =
@@ -1066,6 +1064,12 @@ function App() {
             >
               YaadVault ({stories.length})
             </button>
+            <button
+  className={activeTab === 'shorproof' ? 'active' : ''}
+  onClick={() => setActiveTab('shorproof')}
+>
+  ShorProof
+</button>
           </nav>
 
           <div className="message" role="status" aria-live="polite">
@@ -1423,6 +1427,7 @@ function App() {
               </section>
             </>
           )}
+          {activeTab === 'shorproof' && <ShorProof />}
         </main>
 
         <footer className="footer">
