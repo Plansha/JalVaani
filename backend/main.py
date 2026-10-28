@@ -4,6 +4,10 @@ import time
 from pathlib import Path
 from secrets import compare_digest
 from typing import List
+import os
+import shutil
+import subprocess
+import tempfile
 
 from dotenv import load_dotenv
 from fastapi import (
@@ -138,7 +142,42 @@ def get_languages():
         ]
     }
 
+def convert_webm_to_wav(audio_bytes: bytes) -> bytes:
+    """Convert browser WebM/Opus audio to mono, 16 kHz WAV."""
+    ffmpeg = shutil.which("ffmpeg")
 
+    if not ffmpeg:
+        raise RuntimeError("FFmpeg is not installed or is not on PATH.")
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        input_path = Path(temp_dir) / "input.webm"
+        output_path = Path(temp_dir) / "output.wav"
+
+        input_path.write_bytes(audio_bytes)
+
+        result = subprocess.run(
+            [
+                ffmpeg,
+                "-nostdin",
+                "-hide_banner",
+                "-loglevel", "error",
+                "-y",
+                "-i", str(input_path),
+                "-vn",
+                "-ac", "1",
+                "-ar", "16000",
+                "-c:a", "pcm_s16le",
+                str(output_path),
+            ],
+            capture_output=True,
+            timeout=30,
+            check=False,
+        )
+
+        if result.returncode != 0 or not output_path.exists():
+            raise ValueError("Could not convert the uploaded audio.")
+
+        return output_path.read_bytes()
 @app.post("/api/transcribe")
 async def transcribe_audio(
     audio: UploadFile = File(...),
@@ -189,13 +228,19 @@ async def transcribe_audio(
 
         client = GnaniSTTClient(api_key=GNANI_API_KEY)
         start_time = time.perf_counter()
+        
+        filename = audio.filename
+        if content_type == "audio/webm":
+            content = await run_in_threadpool(convert_webm_to_wav, content)
+            filename = "recording.wav"
+
 
         result = await run_in_threadpool(
             client.transcribe_bytes,
             content,
-            filename=audio.filename,
+            filename=filename,
             language_code=language_code,
-        )
+            )
 
         latency_ms = round(
             (time.perf_counter() - start_time) * 1000
