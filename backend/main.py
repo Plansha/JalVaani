@@ -151,7 +151,8 @@ async def transcribe_audio(
                 detail="No filename provided",
             )
 
-        if audio.content_type not in ALLOWED_TYPES:
+        content_type = (audio.content_type or "").lower().split(";", 1)[0].strip()
+        if content_type not in ALLOWED_TYPES:
             raise HTTPException(
                 status_code=415,
                 detail=f"Unsupported audio format: {audio.content_type}",
