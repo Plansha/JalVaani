@@ -433,9 +433,9 @@ setError("");
         </div>
 
         <p style={{ ...styles.footerNote, marginTop: 18 }}>
-          Note: Selecting files does not upload them. This version does not send
-          audio to the backend, calculate metrics, or save a test report.
-        </p>
+  Your audio files will be sent to the JalVaani backend when you click
+  Compare audio. Results will appear after successful processing.
+</p>
       </section>
     </main>
   );
