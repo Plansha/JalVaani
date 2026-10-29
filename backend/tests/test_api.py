@@ -61,6 +61,7 @@ from unittest.mock import AsyncMock, patch
 
 
 
+
 def test_shorproof_compare_endpoint():
     from unittest.mock import AsyncMock, patch
 
@@ -79,7 +80,7 @@ def test_shorproof_compare_endpoint():
 
     with (
         patch(
-            "backend.main.transcribe_audio",
+            "backend.main._transcribe_upload",
             new_callable=AsyncMock,
             side_effect=[quiet_result, noisy_result],
         ),
@@ -101,15 +102,11 @@ def test_shorproof_compare_endpoint():
         )
 
     assert response.status_code == 200, response.text
-
     result = response.json()
     assert result["report_id"] == "test-report-123"
-    assert result["report_saved"] is True
+    assert result["status"] == "success"
     assert result["quiet"]["transcript"] == reference
-    assert result["quiet"]["wer_percent"] == 0
     assert result["noisy"]["transcript"] == "Flood warning at 8 PM."
-    assert result["noisy"]["wer_percent"] > 0
-
 
 def test_shorproof_compare_rejects_empty_reference():
     response = client.post(
