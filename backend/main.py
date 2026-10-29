@@ -384,10 +384,26 @@ async def compare_shorproof(
     try:
         reference = reference_transcript.strip()
 
+        placeholder_values = {
+            "string",
+            "reference transcript",
+            "enter reference transcript",
+            "your reference transcript",
+        }
+
         if not reference:
             raise HTTPException(
                 status_code=422,
-                detail="Reference transcript cannot be empty.",
+                detail="Please enter the verified reference transcript.",
+            )
+
+        if reference.casefold() in placeholder_values:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    "Replace the placeholder with the exact, verified sentence "
+                    "spoken in both recordings."
+                ),
             )
 
         if language_code not in SUPPORTED_LANGUAGES:
@@ -508,7 +524,6 @@ async def compare_shorproof(
     finally:
         await quiet_audio.close()
         await noisy_audio.close()
-
 
 class CriticalDetailsRequest(BaseModel):
     reference_transcript: str
