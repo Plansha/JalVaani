@@ -371,14 +371,14 @@ setError("");
         </p>
 
         <div style={styles.resultGrid}>
-  {[
-    ["Quiet WER", result?.quiet_wer ?? result?.quiet?.wer],
-    ["Noisy WER", result?.noisy_wer ?? result?.noisy?.wer],
-    ["Character Error Rate", result?.cer ?? result?.overall_cer],
-    ["Latency", result?.latency_ms ?? result?.latency],
-  ].map(([name, value]) => (
+  {([
+  ["Quiet WER", result?.quiet_wer],
+  ["Noisy WER", result?.noisy_wer],
+  ["Character Error Rate", result?.cer ?? result?.overall_cer],
+  ["Latency", result?.latency_ms ?? result?.latency],
+] as [string, unknown][]).map(([name, value]) => (
     <div key={String(name)} style={styles.metric}>
-      <div style={styles.metricName}>{name}</div>
+      <div style={styles.metricName}>{String(name)}</div>
       <div style={styles.metricValue}>
         {value === undefined || value === null
           ? "Not returned"
