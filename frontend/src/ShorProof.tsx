@@ -125,6 +125,9 @@ export default function ShorProof() {
   const [message, setMessage] = useState(
     "Add the required files and reference transcript to prepare a test."
   );
+  const [loading, setLoading] = useState(false);
+const [result, setResult] = useState<Record<string, unknown> | null>(null);
+const [error, setError] = useState("");
 
   function handleFileChange(
     kind: AudioKind,
@@ -151,24 +154,71 @@ export default function ShorProof() {
     );
   }
 
-  function runComparison() {
-    if (!quietAudio || !noisyAudio) {
-      setMessage("Please upload both the quiet and noisy audio files.");
-      return;
-    }
-
-    if (!referenceText.trim()) {
-      setMessage("Please enter the reference transcript first.");
-      return;
-    }
-
-    // This interface is not connected to a comparison API yet.
-    // Do not display invented WER, CER, or latency results.
-    setMessage(
-      "Your test setup is ready, but comparison is not running yet. " +
-        "The backend must support processing both files and returning real transcription results."
-    );
+  async function runComparison() {
+  if (!quietAudio || !noisyAudio) {
+    setError("Please upload both quiet and noisy audio files.");
+    setMessage("");
+    return;
   }
+
+  if (!referenceText.trim()) {
+    setError("Please enter the reference transcript first.");
+    setMessage("");
+    return;
+  }
+
+  setLoading(true);
+  setError("");
+  setResult(null);
+  setMessage("Uploading audio and waiting for the backend...");
+
+  try {
+    const formData = new FormData();
+    formData.append("quiet_audio", quietAudio);
+    formData.append("noisy_audio", noisyAudio);
+    formData.append("language_code", language);
+    formData.append("reference_transcript", referenceText.trim());
+
+    const response = await fetch(
+      "https://jalvaani.onrender.com/api/shorproof/compare",
+      {
+        method: "POST",
+        body: formData,
+        signal: AbortSignal.timeout(120000),
+      }
+    );
+
+    const body = await response.text();
+
+    let data: Record<string, unknown>;
+    try {
+      data = JSON.parse(body) as Record<string, unknown>;
+    } catch {
+      throw new Error(
+        `The server returned an unexpected response (HTTP ${response.status}).`
+      );
+    }
+
+    if (!response.ok) {
+      throw new Error(
+        String(data.detail ?? data.message ?? data.error ??
+          `Request failed: HTTP ${response.status}`)
+      );
+    }
+
+    setResult(data);
+    setMessage("The backend returned a response successfully.");
+  } catch (err) {
+    setError(
+      err instanceof Error
+        ? err.message
+        : "An unexpected error occurred."
+    );
+    setMessage("");
+  } finally {
+    setLoading(false);
+  }
+}
 
   function resetForm() {
     setLanguage("hi-IN");
@@ -176,6 +226,9 @@ export default function ShorProof() {
     setNoisyAudio(null);
     setReferenceText("");
     setMessage("Add the required files and reference transcript to prepare a test.");
+    setLoading(false);
+setResult(null);
+setError("");
 
     const inputs = document.querySelectorAll<HTMLInputElement>(
       ".shorproof-audio-input"
@@ -199,12 +252,16 @@ export default function ShorProof() {
       </header>
 
       <section style={styles.banner} aria-live="polite">
-        <strong>Integration status: Pending</strong>
-        <div>
-          This screen currently prepares test inputs only. It does not yet
-          measure transcription accuracy or noise resilience.
-        </div>
-      </section>
+  <strong>
+    Integration status: {result ? "Response received" : loading ? "Processing" : error ? "Request failed" : "Ready to test"}
+  </strong>
+  <div>{message}</div>
+  {error && (
+    <p style={{ color: "#b91c1c" }}>
+      <strong>Error:</strong> {error}
+    </p>
+  )}
+</section>
 
       <section style={styles.card}>
         <h2 style={styles.cardTitle}>Test configuration</h2>
@@ -314,18 +371,33 @@ export default function ShorProof() {
         </p>
 
         <div style={styles.resultGrid}>
-          {[
-            ["Quiet WER", "Not measured"],
-            ["Noisy WER", "Not measured"],
-            ["Character Error Rate", "Not measured"],
-            ["Transcription latency", "Not measured"],
-          ].map(([name, value]) => (
-            <div key={name} style={styles.metric}>
-              <div style={styles.metricName}>{name}</div>
-              <div style={styles.metricValue}>{value}</div>
-            </div>
-          ))}
-        </div>
+  {[
+    ["Quiet WER", result?.quiet_wer ?? result?.quiet?.wer],
+    ["Noisy WER", result?.noisy_wer ?? result?.noisy?.wer],
+    ["Character Error Rate", result?.cer ?? result?.overall_cer],
+    ["Latency", result?.latency_ms ?? result?.latency],
+  ].map(([name, value]) => (
+    <div key={String(name)} style={styles.metric}>
+      <div style={styles.metricName}>{name}</div>
+      <div style={styles.metricValue}>
+        {value === undefined || value === null
+          ? "Not returned"
+          : typeof value === "number"
+            ? `${value}${String(name) === "Latency" ? " ms" : ""}`
+            : String(value)}
+      </div>
+    </div>
+  ))}
+</div>
+
+{result && (
+  <details style={{ marginTop: 16 }}>
+    <summary>View complete backend response</summary>
+    <pre style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>
+      {JSON.stringify(result, null, 2)}
+    </pre>
+  </details>
+)}
 
         <p role="status" aria-live="polite" style={{ lineHeight: 1.6 }}>
           {message}
@@ -340,12 +412,17 @@ export default function ShorProof() {
           }}
         >
           <button
-            type="button"
-            style={{ ...styles.button, ...styles.primary }}
-            onClick={runComparison}
-          >
-            Prepare comparison
-          </button>
+  type="button"
+  style={{
+    ...styles.button,
+    ...styles.primary,
+    opacity: loading ? 0.7 : 1,
+  }}
+  onClick={runComparison}
+  disabled={loading}
+>
+  {loading ? "Comparing audio..." : "Compare audio"}
+</button>
           <button
             type="button"
             style={{ ...styles.button, ...styles.secondary }}
