@@ -318,6 +318,94 @@ def evaluate_shorproof(request: ShorProofRequest):
         raise HTTPException(status_code=500, detail=str(e)) from e
 
 
+@app.post("/api/shorproof/compare")
+async def compare_shorproof_audio(
+    quiet_audio: UploadFile = File(...),
+    noisy_audio: UploadFile = File(...),
+    language_code: str = Form("en-IN"),
+    reference_transcript: str = Form(...),
+):
+    reference = reference_transcript.strip()
+
+    if not reference:
+        raise HTTPException(
+            status_code=422,
+            detail="Reference transcript cannot be empty.",
+        )
+
+    try:
+        # Reuse the existing transcription route for both recordings.
+        quiet_response = await transcribe_audio(
+            audio=quiet_audio,
+            language_code=language_code,
+        )
+
+        noisy_response = await transcribe_audio(
+            audio=noisy_audio,
+            language_code=language_code,
+        )
+
+        quiet_evaluation = evaluate_transcript(
+            reference_transcript=reference,
+            predicted_transcript=quiet_response["transcript"],
+            latency_ms=quiet_response["latency_ms"],
+        )
+
+        noisy_evaluation = evaluate_transcript(
+            reference_transcript=reference,
+            predicted_transcript=noisy_response["transcript"],
+            latency_ms=noisy_response["latency_ms"],
+        )
+
+        report = {
+            "language_code": language_code,
+            "reference_transcript": reference,
+            "quiet": {
+                "transcript": quiet_response["transcript"],
+                "latency_ms": quiet_response["latency_ms"],
+                "wer_percent": quiet_evaluation["wer_percent"],
+                "cer_percent": quiet_evaluation["cer_percent"],
+                "evaluation": quiet_evaluation,
+            },
+            "noisy": {
+                "transcript": noisy_response["transcript"],
+                "latency_ms": noisy_response["latency_ms"],
+                "wer_percent": noisy_evaluation["wer_percent"],
+                "cer_percent": noisy_evaluation["cer_percent"],
+                "evaluation": noisy_evaluation,
+            },
+        }
+
+        saved_record = save_evaluation("shorproof_compare", report)
+
+        return {
+            "status": "success",
+            "report_id": saved_record["result_id"],
+            "report_saved": True,
+            **report,
+        }
+
+    except HTTPException:
+        raise
+
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail=str(exc),
+        ) from exc
+
+    except RuntimeError as exc:
+        raise HTTPException(
+            status_code=500,
+            detail="Could not save or process the comparison report.",
+        ) from exc
+
+    finally:
+        # transcribe_audio closes each file when it processes it.
+        # Close both defensively in case validation fails before processing.
+        await quiet_audio.close()
+        await noisy_audio.close()
+
 class CriticalDetailsRequest(BaseModel):
     reference_transcript: str
     predicted_transcript: str

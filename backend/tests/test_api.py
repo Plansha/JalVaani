@@ -55,3 +55,73 @@ def test_shorproof_rejects_missing_fields():
     )
 
     assert response.status_code == 422
+
+
+from unittest.mock import AsyncMock, patch
+
+
+
+def test_shorproof_compare_endpoint():
+    from unittest.mock import AsyncMock, patch
+
+    reference = "Flood warning at 6 PM."
+
+    quiet_result = {
+        "status": "success",
+        "transcript": reference,
+        "latency_ms": 500,
+    }
+    noisy_result = {
+        "status": "success",
+        "transcript": "Flood warning at 8 PM.",
+        "latency_ms": 700,
+    }
+
+    with (
+        patch(
+            "backend.main.transcribe_audio",
+            new_callable=AsyncMock,
+            side_effect=[quiet_result, noisy_result],
+        ),
+        patch(
+            "backend.main.save_evaluation",
+            return_value={"result_id": "test-report-123"},
+        ),
+    ):
+        response = client.post(
+            "/api/shorproof/compare",
+            files=[
+                ("quiet_audio", ("quiet.wav", b"fake audio", "audio/wav")),
+                ("noisy_audio", ("noisy.wav", b"fake audio", "audio/wav")),
+            ],
+            data={
+                "language_code": "en-IN",
+                "reference_transcript": reference,
+            },
+        )
+
+    assert response.status_code == 200, response.text
+
+    result = response.json()
+    assert result["report_id"] == "test-report-123"
+    assert result["report_saved"] is True
+    assert result["quiet"]["transcript"] == reference
+    assert result["quiet"]["wer_percent"] == 0
+    assert result["noisy"]["transcript"] == "Flood warning at 8 PM."
+    assert result["noisy"]["wer_percent"] > 0
+
+
+def test_shorproof_compare_rejects_empty_reference():
+    response = client.post(
+        "/api/shorproof/compare",
+        files=[
+            ("quiet_audio", ("quiet.wav", b"fake audio", "audio/wav")),
+            ("noisy_audio", ("noisy.wav", b"fake audio", "audio/wav")),
+        ],
+        data={
+            "language_code": "en-IN",
+            "reference_transcript": "   ",
+        },
+    )
+
+    assert response.status_code == 422
