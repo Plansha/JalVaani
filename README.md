@@ -1,9 +1,9 @@
 <p align="center"><b>🌊 JalVaani</b></p>
 
-<h3 align="center">Noise-Resilient Voice Intelligence for Coastal Communities</h3><p align="center">
+<h3 align="center"><b>Noise-Resilient Voice Intelligence for Coastal Communities</b></h3><p align="center">
   <b>🎙️ Every Voice Deserves to Be Heard!</b>
 </p><p align="center">
-  When the sea gets loud, every voice deserves to be understood—and every story deserves to survive.
+  <i><b>When the sea gets loud, every voice deserves to be understood—and every story deserves to survive.</b></i>
 </p><p align="center">
   <a href="https://jalvaani-frontend.onrender.com/">
     <img src="https://img.shields.io/badge/Live_Demo-Visit_JalVaani-success?style=for-the-badge" alt="Live Demo"/>
@@ -73,7 +73,7 @@ Features:
 
 Evaluates speech recognition performance in quiet and noisy audio environments.
 
-Evaluation metrics:
+Evaluation Metrics:
 
 - WER: Word Error Rate
 - CER: Character Error Rate
@@ -173,7 +173,7 @@ Divya Pal
 
 JalVaani aims to make voice communication more reliable and inclusive for communities facing challenging communication environments.
 
-Our goals:
+Our Goals:
 
 - 🎙️ Improve speech accessibility in noisy environments.
 - 🌍 Support multilingual voice interactions.
@@ -181,9 +181,13 @@ Our goals:
 - 💾 Preserve valuable stories and community information.
 - 🤝 Promote responsible and consent-based information preservation.
 
-Every voice matters. Every language deserves to be understood. Every story deserves to be preserved.
-
----
+<p align="center">
+  <b>Every voice matters.</b>
+</p><p align="center">
+  <b>Every language deserves to be understood.</b>
+</p><p align="center">
+  <b>Every story deserves to be preserved.</b>
+</p>---
 
 🔐 Responsible AI
 
@@ -197,28 +201,12 @@ JalVaani is designed with responsible AI principles in mind.
 
 ---
 
-🚀 Future Scope
-
-Potential future improvements include:
-
-- Improved speech recognition in highly noisy environments.
-- Expanded support for Indian languages and regional dialects.
-- More advanced transcript uncertainty detection.
-- Enhanced transcript evaluation.
-- Improved offline recording and synchronization.
-- Stronger privacy and consent management.
-- Expanded community knowledge preservation.
-
----
-
 🏆 Challenge
 
 <p align="center">
   <b>Great Indian AI Internship Challenge</b>
 </p><p align="center">
   <b>Organized by Gnani AI</b>
-</p><p align="center">
-  <i>Build Sovereign AI for India</i>
 </p>JalVaani was developed as part of the Great Indian AI Internship Challenge by Gnani AI.
 
 The project explores how voice AI can support multilingual communication, speech accessibility, and community information preservation.
@@ -235,9 +223,10 @@ Explore how JalVaani brings multilingual voice AI and our vision together.
   <a href="https://jalvaani-frontend.onrender.com/">
     <img src="https://img.shields.io/badge/🚀_Open_Live_Demo-Visit_JalVaani-success?style=for-the-badge" alt="Live Demo"/>
   </a>
-</p>Live Website: https://jalvaani-frontend.onrender.com/
-
----
+</p><p align="center">
+  <b>Live Website:</b>
+  <a href="https://jalvaani-frontend.onrender.com/"><b>https://jalvaani-frontend.onrender.com/</b></a>
+</p>---
 
 🔗 Project Links
 
@@ -255,6 +244,6 @@ Explore how JalVaani brings multilingual voice AI and our vision together.
 </p><p align="center">
   <b>Every voice deserves to be heard.</b>
 </p><p align="center">
-  Every language deserves to be understood.
+  <b>Every language deserves to be understood.</b>
 </p><p align="center">
-  Every story deserves to be preserved.
+  <b>Every story deserves to be preserved.</b>
