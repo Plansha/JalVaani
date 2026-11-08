@@ -159,7 +159,7 @@ Important information should be checked against reliable reference details whene
 
 Built for the Great Indian AI Internship Challenge by Gnani AI.
 
-Theme: Build Sovereign AI for India
+
 
 ---
 
