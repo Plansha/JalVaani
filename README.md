@@ -2,8 +2,7 @@
 
 <h3 align="center">Noise-Resilient Voice Intelligence for Coastal Communities</h3><p align="center">
   <i>When the sea gets loud, every voice deserves to be understood—and every story deserves to survive.</i>
-</p><p align="center">
-  <b>Developer: Divya Pal</b>
+
 </p><p align="center">
   <img src="https://img.shields.io/badge/React-Frontend-61DAFB?style=for-the-badge&logo=react&logoColor=black"/>
   <img src="https://img.shields.io/badge/TypeScript-Development-3178C6?style=for-the-badge&logo=typescript&logoColor=white"/>
