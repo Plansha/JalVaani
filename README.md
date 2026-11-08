@@ -181,13 +181,7 @@ Our Goals:
 - 💾 Preserve valuable stories and community information.
 - 🤝 Promote responsible and consent-based information preservation.
 
-<p align="center">
-  <b>Every voice matters.</b>
-</p><p align="center">
-  <b>Every language deserves to be understood.</b>
-</p><p align="center">
-  <b>Every story deserves to be preserved.</b>
-</p>---
+
 
 🔐 Responsible AI
 
